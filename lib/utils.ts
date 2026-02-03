@@ -162,7 +162,8 @@ export function convertJavascriptEvaluationResult(res: any): any {
 
   if (res.status && res.status !== 0) {
     // we got some form of error.
-    throw errorFromMJSONWPStatusCode(res.status, res.value.message || res.value);
+    const value = res.value;
+    throw errorFromMJSONWPStatusCode(res.status, value?.message ?? value ?? 'Unknown error');
   }
 
   // with either have an object with a `value` property (even if `null`),

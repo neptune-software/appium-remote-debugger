@@ -460,7 +460,8 @@ export class RpcClient {
       } else if (hasSocketData) {
         this.messageHandler.once(msgId.toString(), (err: Error | null, value: any) => {
           if (err) {
-            return reject(new Error(`Remote debugger error with code '${(err as any).code}': ${err.message}`));
+            const msg = err?.message ?? (err != null ? String(err) : 'Unknown error');
+            return reject(new Error(`Remote debugger error with code '${(err as any)?.code}': ${msg}`));
           }
           log.debug(`Received data response from send (id: ${msgId}): '${_.truncate(JSON.stringify(value), DATA_LOG_LENGTH)}'`);
           resolve(value);

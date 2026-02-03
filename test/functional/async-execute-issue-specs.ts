@@ -363,10 +363,61 @@ describe('Async Execute Issue - Minimal Reproduction', function () {
   });
 
   // ==========================================================================
+  // ADDITIONAL ASYNC VARIATIONS - WebdriverIO-style and complex returns
+  // ==========================================================================
+
+  describe('Additional async variations', function () {
+    /**
+     * WebdriverIO sends (async()=>...) with no space after async.
+     * Detection must match async() as well as async ().
+     */
+    it('should return value from async arrow with no space (WebdriverIO-style)', async function () {
+      await selectTestPage();
+
+      const script = `return (async()=>{return "async result"})();`;
+      const result = await rd.executeAtom('execute_script', [script, []]);
+
+      expect(result).to.equal('async result');
+    });
+
+    /**
+     * Simple async function returning immediately (no await).
+     * Same pattern as wdi5-cordova "simple async function" test.
+     */
+    it('should return value from simple async function (no await)', async function () {
+      await selectTestPage();
+
+      const script = `return (async function(){return "async result"})();`;
+      const result = await rd.executeAtom('execute_script', [script, []]);
+
+      expect(result).to.equal('async result');
+    });
+
+    /**
+     * Async function that returns a complex object after a short delay.
+     * Ensures object serialization works after Runtime.awaitPromise.
+     */
+    it('should return complex object after async delay', async function () {
+      await selectTestPage();
+
+      const script = `return (async function() {
+        await new Promise(function(r){setTimeout(r, 50);});
+        return { status: "success", version: "1.120.0", isReady: true };
+      })();`;
+
+      const result = await rd.executeAtom('execute_script', [script, []]);
+
+      expect(result).to.have.property('status', 'success');
+      expect(result).to.have.property('version', '1.120.0');
+      expect(result).to.have.property('isReady', true);
+    });
+  });
+
+  // ==========================================================================
   // LOW-LEVEL REPRODUCTION - Direct rd.execute() calls
   // ==========================================================================
 
-  describe('Direct rd.execute() (BROKEN for async)', function () {
+  describe('Direct rd.execute()', function () {
     it('should return sync value directly', async function () {
       await selectTestPage();
 

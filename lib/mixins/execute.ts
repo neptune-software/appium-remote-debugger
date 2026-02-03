@@ -28,8 +28,8 @@ const RPC_RESPONSE_TIMEOUT_MS = 5000;
  * @returns True if the script likely returns a Promise.
  */
 function mightReturnPromise(script: string): boolean {
-  // Detect async function patterns
-  if (/\basync\s+(function|\()/.test(script)) return true;
+  // Detect async function patterns (with or without space after async, e.g. async()=> or async ()=>
+  if (/\basync\s*(\(|function\b)/.test(script)) return true;
   if (/\basync\s+\w+\s*=>/.test(script)) return true;
 
   // Detect Promise patterns
