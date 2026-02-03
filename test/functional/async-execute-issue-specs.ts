@@ -41,8 +41,8 @@ import chaiAsPromised from 'chai-as-promised';
 use(chaiAsPromised);
 
 const SIM_NAME = process.env.SIM_DEVICE_NAME || `appium-async-test-${util.uuidV4()}`;
-const DEVICE_NAME = process.env.DEVICE_NAME || 'iPhone 17';
-const PLATFORM_VERSION = process.env.PLATFORM_VERSION || '26.2';
+const DEVICE_NAME = process.env.DEVICE_NAME || 'iPhone 16';
+const PLATFORM_VERSION = process.env.PLATFORM_VERSION || '18.2';
 
 const PAGE_TITLE = 'Remote debugger test page';
 
@@ -94,9 +94,11 @@ describe('Async Execute Issue - Minimal Reproduction', function () {
   });
 
   after(async function () {
-    await sim.shutdown();
-    if (simCreated) {
-      await deleteDeviceWithRetry(sim.udid);
+    if (sim) {
+      await sim.shutdown();
+      if (simCreated) {
+        await deleteDeviceWithRetry(sim.udid);
+      }
     }
     stopHttpServer();
   });
@@ -379,27 +381,20 @@ describe('Async Execute Issue - Minimal Reproduction', function () {
       expect(result).to.equal('hello');
     });
 
-    it('should return {} for Promise (DEMONSTRATES THE BUG)', async function () {
+    it('should return resolved value for Promise (FIXED)', async function () {
       await selectTestPage();
 
       const result = await rd.execute('Promise.resolve("should be this value")');
 
-      // Debug: Direct Promise result will be {} instead of "should be this value"
-
-      // This demonstrates the bug: Promise serializes to {}
-      // We check for the broken behavior here, not the expected behavior
-      expect(result).to.deep.equal({}); // BUG: should be "should be this value"
+      expect(result).to.equal('should be this value');
     });
 
-    it('should return {} for async IIFE (DEMONSTRATES THE BUG)', async function () {
+    it('should return resolved value for async IIFE (FIXED)', async function () {
       await selectTestPage();
 
       const result = await rd.execute('(async () => "async value")()');
 
-      // Debug: Direct async IIFE result will be {} instead of "async value"
-
-      // This demonstrates the bug: async function return value serializes to {}
-      expect(result).to.deep.equal({}); // BUG: should be "async value"
+      expect(result).to.equal('async value');
     });
   });
 });

@@ -21,6 +21,31 @@ import type { AppIdKey, PageIdKey } from '../types';
 const RPC_RESPONSE_TIMEOUT_MS = 5000;
 
 /**
+ * Detects if a script might return a Promise or be an async function.
+ * This is used to determine if we need to use Runtime.awaitPromise.
+ *
+ * @param script - The script string to analyze.
+ * @returns True if the script likely returns a Promise.
+ */
+function mightReturnPromise(script: string): boolean {
+  // Detect async function patterns
+  if (/\basync\s+(function|\()/.test(script)) return true;
+  if (/\basync\s+\w+\s*=>/.test(script)) return true;
+
+  // Detect Promise patterns
+  if (/Promise\s*\.\s*(resolve|reject|all|race|any|allSettled)/.test(script)) return true;
+  if (/new\s+Promise\s*\(/.test(script)) return true;
+
+  // Detect .then() chains (common in async patterns)
+  if (/\.then\s*\(/.test(script)) return true;
+
+  // Detect await keyword (script might be wrapped in async)
+  if (/\bawait\s+/.test(script)) return true;
+
+  return false;
+}
+
+/**
  * Executes a Selenium atom in Safari by generating the atom script and
  * executing it in the page context.
  *
@@ -36,7 +61,20 @@ export async function executeAtom(
   frames: string[] = []
 ): Promise<any> {
   this.log.debug(`Executing atom '${atom}' with 'args=${JSON.stringify(args)}; frames=${frames}'`);
-  const script = await getScriptForAtom(atom, args, frames);
+
+  // For execute_script with a script that may return a Promise, bypass the atom when in default context.
+  // The atom serializes the return value with Q(), which turns Promises into {}.
+  // By running the user script directly, execute() can detect the Promise and await it.
+  // Wrap in a function so "return" is valid (scripts are written as function bodies for the atom).
+  const rawScript =
+    atom === 'execute_script' && args.length > 0 && frames.length === 0 && mightReturnPromise(args[0])
+      ? args[0]
+      : null;
+  const script =
+    rawScript !== null
+      ? `(function() { ${rawScript} })()`
+      : await getScriptForAtom(atom, args, frames);
+
   const value = await this.execute(script);
   this.log.debug(`Received result for atom '${atom}' execution: ${_.truncate(simpleStringify(value), {
     length: RESPONSE_LOG_LENGTH
@@ -148,6 +186,9 @@ export async function executeAtomAsync(
  * Executes a JavaScript command in the page context and returns the result.
  * Optionally performs garbage collection before execution if configured.
  *
+ * NEW: If the script returns a Promise (including async functions), the Promise
+ * is automatically awaited and the resolved value is returned.
+ *
  * @param command - The JavaScript command string to execute.
  * @param override - Deprecated and unused parameter.
  * @returns A promise that resolves to the result of the JavaScript evaluation,
@@ -169,7 +210,21 @@ export async function execute(this: RemoteDebugger, command: string, override?: 
     appIdKey as AppIdKey,
     pageIdKey as PageIdKey
   );
+
   this.log.debug(`Sending javascript command: '${_.truncate(command, {length: 50})}'`);
+
+  // Check if the script might return a Promise
+  const scriptMightBeAsync = mightReturnPromise(command);
+
+  if (scriptMightBeAsync) {
+    // For potentially async scripts, we need to:
+    // 1. Execute with returnByValue: false to get object reference
+    // 2. Check if result is a Promise
+    // 3. If Promise, use Runtime.awaitPromise to get resolved value
+    return await executeWithPromiseSupport.call(this, command, appIdKey as AppIdKey, pageIdKey as PageIdKey);
+  }
+
+  // Original sync execution path for scripts that definitely don't return Promises
   const res = await rpcClient.send('Runtime.evaluate', {
     expression: command,
     returnByValue: true,
@@ -177,6 +232,88 @@ export async function execute(this: RemoteDebugger, command: string, override?: 
     pageIdKey,
   });
   return convertJavascriptEvaluationResult(res);
+}
+
+/**
+ * Executes a script with proper Promise/async function support.
+ * If the script returns a Promise, it will be awaited and the resolved value returned.
+ *
+ * @param command - The JavaScript command string to execute.
+ * @param appIdKey - The application ID key.
+ * @param pageIdKey - The page ID key.
+ * @returns A promise that resolves to the result of the JavaScript evaluation.
+ */
+async function executeWithPromiseSupport(
+  this: RemoteDebugger,
+  command: string,
+  appIdKey: AppIdKey,
+  pageIdKey: PageIdKey
+): Promise<any> {
+  const rpcClient = this.requireRpcClient(true);
+
+  // First, evaluate the script with returnByValue: false to get object reference
+  // This allows us to detect if the result is a Promise
+  const evalResult = await rpcClient.send('Runtime.evaluate', {
+    expression: command,
+    returnByValue: false,  // Important: false to get objectId for Promises
+    appIdKey,
+    pageIdKey,
+  });
+
+  // Check if the result is a Promise (WebKit may use subtype or className)
+  const resultDesc = evalResult.result;
+  const isPromise =
+    resultDesc?.subtype === 'promise' || resultDesc?.className === 'Promise';
+
+  if (isPromise && evalResult.result?.objectId) {
+    this.log.debug('Script returned a Promise, awaiting result...');
+
+    try {
+      // Use Runtime.awaitPromise to get the resolved value
+      const awaitResult = await rpcClient.send('Runtime.awaitPromise', {
+        promiseObjectId: evalResult.result.objectId,
+        returnByValue: true,
+        generatePreview: true,
+        saveResult: true,
+        appIdKey,
+        pageIdKey,
+      });
+
+      return convertJavascriptEvaluationResult(awaitResult);
+    } catch (err: any) {
+      // Runtime.awaitPromise might not be available on older WebKit versions
+      if (err.message?.includes(`'Runtime.awaitPromise' was not found`)) {
+        this.log.warn(
+          'Runtime.awaitPromise not available, falling back to polling. ' +
+          'Consider using executeAsync for async operations.'
+        );
+        // Fall back to returning the raw result (will be {})
+        // Users should use executeAsync as a workaround
+        return convertJavascriptEvaluationResult(evalResult);
+      }
+      throw err;
+    }
+  }
+
+  // Not a Promise, or we couldn't get object reference
+  // Try to get the value directly
+  if (evalResult.result?.value !== undefined) {
+    return convertJavascriptEvaluationResult(evalResult);
+  }
+
+  // If we have an objectId but it's not a Promise, get the value
+  if (evalResult.result?.objectId) {
+    const valueResult = await rpcClient.send('Runtime.callFunctionOn', {
+      objectId: evalResult.result.objectId,
+      functionDeclaration: 'function() { return this; }',
+      returnByValue: true,
+      appIdKey,
+      pageIdKey,
+    });
+    return convertJavascriptEvaluationResult(valueResult);
+  }
+
+  return convertJavascriptEvaluationResult(evalResult);
 }
 
 /**

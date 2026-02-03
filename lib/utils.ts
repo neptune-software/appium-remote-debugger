@@ -153,6 +153,9 @@ export function convertJavascriptEvaluationResult(res: any): any {
       // we might get a serialized object, but we might not
       // if we get here, it is just a value
     }
+  } else if (_.isNumber(res) || _.isBoolean(res) || res === null) {
+    // RPC layer may unwrap to primitive; return as-is
+    return res;
   } else if (!_.isObject(res)) {
     throw new Error(`Result has unexpected type: (${typeof res}).`);
   }
