@@ -167,6 +167,58 @@ describe('Async Execute Issue - Unit Tests', function () {
       // The resolved value
       expect(awaitResult.result.value).to.equal('resolved value');
     });
+
+    it('should serialize complex object when awaitPromise returns objectId', async function () {
+      const sendStub = sinon.stub();
+
+      // First call: Runtime.evaluate returns a Promise object reference
+      sendStub.onFirstCall().resolves({
+        result: {
+          type: 'object',
+          subtype: 'promise',
+          className: 'Promise',
+          objectId: 'promise-obj-1',
+        },
+      });
+
+      // Second call: Runtime.awaitPromise returns object reference (no value) for complex object
+      sendStub.onSecondCall().resolves({
+        result: {
+          type: 'object',
+          objectId: 'resolved-obj-1',
+          // no value - WebKit sometimes returns objectId for complex objects
+        },
+      });
+
+      // Third call: Runtime.callFunctionOn serializes the object
+      sendStub.onThirdCall().resolves({
+        result: {
+          type: 'object',
+          value: { status: 'success', version: '1.120.0', isReady: true },
+        },
+      });
+
+      const ctx = {
+        _appIdKey: 'appId',
+        _pageIdKey: 'pageId',
+        log: { debug: () => { } },
+        _rpcClient: {
+          isConnected: true,
+          send: sendStub,
+          waitForPage: async () => { },
+        },
+        requireRpcClient() {
+          return this._rpcClient;
+        },
+      };
+
+      const result = await execute.call(ctx as any, '(async () => ({ status: "success", version: "1.120.0", isReady: true }))()');
+
+      expect(result).to.deep.equal({ status: 'success', version: '1.120.0', isReady: true });
+      expect(sendStub.callCount).to.equal(3);
+      expect(sendStub.secondCall.args[0]).to.equal('Runtime.awaitPromise');
+      expect(sendStub.thirdCall.args[0]).to.equal('Runtime.callFunctionOn');
+    });
   });
 
   describe('Async Detection Helper', function () {

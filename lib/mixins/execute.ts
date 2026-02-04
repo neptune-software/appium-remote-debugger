@@ -270,7 +270,7 @@ async function executeWithPromiseSupport(
 
     try {
       // Use Runtime.awaitPromise to get the resolved value
-      const awaitResult = await rpcClient.send('Runtime.awaitPromise', {
+      let awaitResult = await rpcClient.send('Runtime.awaitPromise', {
         promiseObjectId: evalResult.result.objectId,
         returnByValue: true,
         generatePreview: true,
@@ -278,6 +278,20 @@ async function executeWithPromiseSupport(
         appIdKey,
         pageIdKey,
       });
+
+      // WebKit may return an object reference (objectId) instead of serialized value
+      // for complex objects; fetch the value via Runtime.callFunctionOn.
+      const resolved = awaitResult?.result ?? awaitResult;
+      if (resolved?.objectId != null && resolved?.value === undefined) {
+        this.log.debug('Promise resolved to object reference, serializing with callFunctionOn...');
+        awaitResult = await rpcClient.send('Runtime.callFunctionOn', {
+          objectId: resolved.objectId,
+          functionDeclaration: 'function() { return this; }',
+          returnByValue: true,
+          appIdKey,
+          pageIdKey,
+        });
+      }
 
       return convertJavascriptEvaluationResult(awaitResult);
     } catch (err: any) {

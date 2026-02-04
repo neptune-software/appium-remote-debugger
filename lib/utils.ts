@@ -160,15 +160,18 @@ export function convertJavascriptEvaluationResult(res: any): any {
     throw new Error(`Result has unexpected type: (${typeof res}).`);
   }
 
-  if (res.status && res.status !== 0) {
-    // we got some form of error.
+  // Only treat numeric status as MJSONWP protocol error (user data may have status: "success" etc.)
+  if (_.isNumber(res.status) && res.status !== 0) {
     const value = res.value;
     throw errorFromMJSONWPStatusCode(res.status, value?.message ?? value ?? 'Unknown error');
   }
 
-  // with either have an object with a `value` property (even if `null`),
-  // or a plain object
-  const value = _.has(res, 'value') ? res.value : res;
+  // We may have: (a) unwrapped { value } from RPC, (b) CDP shape { result: { value } },
+  // or (c) the value itself (plain object)
+  const resObj = res as Record<string, any>;
+  const value = _.has(resObj, 'value')
+    ? resObj.value
+    : (_.has(resObj?.result, 'value') ? resObj.result.value : resObj);
   return removeNoisyProperties(value);
 }
 

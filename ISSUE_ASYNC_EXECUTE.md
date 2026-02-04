@@ -19,6 +19,8 @@ const result = await browser.execute(async () => "hello");
 
 Sync scripts work; only async/Promise-returning scripts are affected.
 
+**Context (WebdriverIO + Appium):** With WebdriverIO and Appium, `browser.execute()` is the usual way to run scripts. That call goes through Appium’s XCUITest driver into **appium-remote-debugger** for iOS WKWebView. The callback-based `browser.executeAsync()` still works on iOS WKWebView today, but the standard, promise-returning path is `browser.execute()`. Fixing async/Promise handling in `execute()` is what makes `browser.execute(async () => …)` reliable and keeps iOS WKWebView tests future-proof (e.g. for wdi5 and other frameworks that use `execute()` with async functions).
+
 ---
 
 ## Root cause
